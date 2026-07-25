@@ -1,0 +1,938 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Deep Focus — Pomodoro Timer</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=Inter:wght@400;500;600;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --ink:#1B1B2F;
+    --muted:#75758C;
+    --paper:#F6F3FA;
+    --card:#FFFFFF;
+    --card-border:#EDE8F5;
+    --focus-1:#FF6B5B;
+    --focus-2:#FFB84D;
+    --break-1:#2EC4B6;
+    --break-2:#4EA8DE;
+    --long-1:#8E7CC3;
+    --long-2:#4EA8DE;
+    --shadow: 0 20px 50px -20px rgba(27,27,47,0.25);
+    --radius-lg: 28px;
+    --radius-md: 18px;
+    --font-display:'Fraunces', serif;
+    --font-body:'Inter', sans-serif;
+    --font-mono:'Space Mono', monospace;
+  }
+
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;}
+
+  body{
+    min-height:100vh;
+    font-family:var(--font-body);
+    color:var(--ink);
+    background:var(--paper);
+    display:flex;
+    align-items:flex-start;
+    justify-content:center;
+    padding:32px 16px 64px;
+    position:relative;
+    overflow-x:hidden;
+  }
+
+  /* ---------- Ambient phase wash ---------- */
+  .ambient-bg{
+    position:fixed;
+    inset:-10%;
+    z-index:0;
+    pointer-events:none;
+    background:
+      radial-gradient(circle at 18% 20%, color-mix(in srgb, var(--focus-1) 32%, transparent) 0%, transparent 55%),
+      radial-gradient(circle at 85% 75%, color-mix(in srgb, var(--focus-2) 26%, transparent) 0%, transparent 55%);
+    filter:blur(40px);
+    transition: background 1.8s ease;
+    animation: drift 18s ease-in-out infinite;
+  }
+  .ambient-bg.phase-short{
+    background:
+      radial-gradient(circle at 18% 20%, color-mix(in srgb, var(--break-1) 30%, transparent) 0%, transparent 55%),
+      radial-gradient(circle at 85% 75%, color-mix(in srgb, var(--break-2) 24%, transparent) 0%, transparent 55%);
+  }
+  .ambient-bg.phase-long{
+    background:
+      radial-gradient(circle at 18% 20%, color-mix(in srgb, var(--long-1) 30%, transparent) 0%, transparent 55%),
+      radial-gradient(circle at 85% 75%, color-mix(in srgb, var(--long-2) 24%, transparent) 0%, transparent 55%);
+  }
+  @keyframes drift{
+    0%,100%{ transform: translate(0,0) scale(1); }
+    50%{ transform: translate(-1.5%, 1.5%) scale(1.04); }
+  }
+  @media (prefers-reduced-motion: reduce){
+    .ambient-bg{ animation:none; }
+  }
+
+  .app{
+    position:relative;
+    z-index:1;
+    width:100%;
+    max-width:440px;
+    display:flex;
+    flex-direction:column;
+    gap:20px;
+  }
+
+  header{
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    padding:4px 4px 0;
+  }
+  .eyebrow{
+    font-family:var(--font-mono);
+    font-size:12px;
+    letter-spacing:0.14em;
+    text-transform:uppercase;
+    color:var(--muted);
+  }
+  .header-controls{ display:flex; gap:8px; }
+  .icon-btn{
+    width:38px; height:38px;
+    border-radius:12px;
+    border:1px solid var(--card-border);
+    background:var(--card);
+    display:flex; align-items:center; justify-content:center;
+    font-size:16px;
+    cursor:pointer;
+    box-shadow: 0 6px 16px -10px rgba(27,27,47,0.3);
+    transition: transform .15s ease, box-shadow .15s ease;
+  }
+  .icon-btn:hover{ transform: translateY(-1px); }
+  .icon-btn:focus-visible, button:focus-visible, input:focus-visible{
+    outline: 2px solid var(--ink);
+    outline-offset: 2px;
+  }
+
+  /* ---------- Timer card ---------- */
+  .timer-card{
+    background:var(--card);
+    border:1px solid var(--card-border);
+    border-radius:var(--radius-lg);
+    box-shadow:var(--shadow);
+    padding:32px 24px 26px;
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+    gap:22px;
+  }
+
+  .ring-wrap{
+    position:relative;
+    width:min(280px, 62vw);
+    aspect-ratio:1/1;
+  }
+  .ring{ width:100%; height:100%; transform:rotate(-90deg); }
+  .ring-track{
+    fill:none;
+    stroke:#F0EDF7;
+    stroke-width:14;
+  }
+  .ring-progress{
+    fill:none;
+    stroke-width:14;
+    stroke-linecap:round;
+    transition: stroke-dashoffset 0.9s cubic-bezier(.4,0,.2,1), stroke 0.6s ease;
+  }
+  .ring-progress.running{
+    filter: drop-shadow(0 0 10px rgba(255,107,91,0.35));
+  }
+
+  .ring-center{
+    position:absolute; inset:0;
+    display:flex; flex-direction:column;
+    align-items:center; justify-content:center;
+    gap:4px;
+    text-align:center;
+  }
+  .phase-label{
+    font-family:var(--font-display);
+    font-size:clamp(18px,4.4vw,22px);
+    font-weight:600;
+    letter-spacing:0.01em;
+  }
+  .time-display{
+    font-family:var(--font-mono);
+    font-size:clamp(38px,10vw,52px);
+    font-weight:700;
+    font-variant-numeric: tabular-nums;
+    letter-spacing:0.01em;
+  }
+  .phase-sub{
+    font-size:12px;
+    color:var(--muted);
+    font-family:var(--font-body);
+  }
+
+  .controls{
+    display:flex;
+    align-items:center;
+    gap:12px;
+  }
+  .btn{
+    font-family:var(--font-body);
+    font-weight:600;
+    font-size:14px;
+    border-radius:999px;
+    border:none;
+    padding:12px 20px;
+    cursor:pointer;
+    transition: transform .15s ease, box-shadow .15s ease, opacity .15s ease;
+  }
+  .btn:active{ transform: scale(0.96); }
+  .btn-primary{
+    background: linear-gradient(120deg, var(--focus-1), var(--focus-2));
+    color:white;
+    padding:14px 30px;
+    box-shadow: 0 10px 24px -10px rgba(255,107,91,0.6);
+  }
+  .app.phase-short .btn-primary,
+  .app.phase-long .btn-primary{
+    background: linear-gradient(120deg, var(--break-1), var(--break-2));
+    box-shadow: 0 10px 24px -10px rgba(46,196,182,0.55);
+  }
+  .btn-ghost{
+    background:var(--paper);
+    color:var(--ink);
+    border:1px solid var(--card-border);
+  }
+
+  .garden{
+    width:100%;
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+    gap:8px;
+    padding-top:4px;
+    border-top:1px dashed var(--card-border);
+  }
+  .garden-label{
+    font-size:11px;
+    letter-spacing:0.1em;
+    text-transform:uppercase;
+    color:var(--muted);
+    font-family:var(--font-mono);
+    margin-top:10px;
+  }
+  .garden-row{
+    display:flex;
+    flex-wrap:wrap;
+    justify-content:center;
+    gap:6px;
+    min-height:28px;
+  }
+  .bloom{
+    font-size:20px;
+    opacity:0;
+    transform:scale(0.3);
+    animation: bloom-in 0.6s cubic-bezier(.2,1.4,.4,1) forwards;
+  }
+  @keyframes bloom-in{
+    to{ opacity:1; transform:scale(1); }
+  }
+  .bloom-slot{
+    font-size:20px;
+    opacity:0.25;
+  }
+
+  /* ---------- Week card ---------- */
+  .week-card{
+    background:var(--card);
+    border:1px solid var(--card-border);
+    border-radius:var(--radius-md);
+    box-shadow:var(--shadow);
+    padding:22px 22px 18px;
+  }
+  .week-header{
+    display:flex;
+    justify-content:space-between;
+    align-items:baseline;
+    margin-bottom:16px;
+    flex-wrap:wrap;
+    gap:6px;
+  }
+  .week-title{
+    font-family:var(--font-display);
+    font-weight:600;
+    font-size:18px;
+  }
+  .week-stat{
+    font-family:var(--font-mono);
+    font-size:12.5px;
+    color:var(--muted);
+  }
+  .chart{
+    display:flex;
+    align-items:flex-end;
+    gap:8px;
+    height:120px;
+    padding:0 2px;
+  }
+  .bar-col{
+    flex:1;
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+    justify-content:flex-end;
+    height:100%;
+    gap:8px;
+  }
+  .bar{
+    width:100%;
+    max-width:30px;
+    border-radius:8px 8px 4px 4px;
+    background: linear-gradient(180deg, var(--focus-2), var(--focus-1));
+    min-height:6px;
+    transition: height 0.6s cubic-bezier(.2,1,.3,1);
+  }
+  .bar-col.today .bar{
+    background: linear-gradient(180deg, var(--break-2), var(--break-1));
+  }
+  .bar-day{
+    font-size:11px;
+    color:var(--muted);
+    font-family:var(--font-mono);
+  }
+  .bar-col.today .bar-day{
+    color:var(--ink);
+    font-weight:700;
+  }
+  .streak{
+    margin-top:16px;
+    text-align:center;
+    font-family:var(--font-mono);
+    font-size:13px;
+    color:var(--ink);
+    background:var(--paper);
+    border-radius:999px;
+    padding:8px 12px;
+  }
+
+  /* ---------- Settings panel ---------- */
+  .settings-overlay{
+    position:fixed; inset:0;
+    background:rgba(27,27,47,0.35);
+    display:none;
+    align-items:center;
+    justify-content:center;
+    z-index:10;
+    padding:20px;
+  }
+  .settings-overlay.open{ display:flex; }
+  .settings-panel{
+    background:var(--card);
+    border-radius:var(--radius-md);
+    padding:24px;
+    width:100%;
+    max-width:340px;
+    box-shadow:var(--shadow);
+    display:flex;
+    flex-direction:column;
+    gap:16px;
+  }
+  .settings-panel h2{
+    font-family:var(--font-display);
+    font-size:19px;
+    margin:0;
+  }
+  .field{
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    gap:12px;
+  }
+  .field label{ font-size:14px; }
+  .field input[type="number"]{
+    width:70px;
+    padding:8px 10px;
+    border-radius:10px;
+    border:1px solid var(--card-border);
+    font-family:var(--font-mono);
+    font-size:14px;
+    text-align:center;
+  }
+  .field-toggle{
+    display:flex; align-items:center; justify-content:space-between;
+  }
+  .settings-actions{
+    display:flex;
+    justify-content:flex-end;
+    gap:10px;
+    margin-top:6px;
+  }
+
+  #confettiCanvas{
+    position:fixed; inset:0;
+    pointer-events:none;
+    z-index:20;
+  }
+
+  .visually-hidden{
+    position:absolute; width:1px;height:1px;
+    overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap;
+  }
+
+  @media (max-width:380px){
+    .timer-card{ padding:24px 16px 20px; }
+    .btn{ padding:11px 16px; font-size:13px; }
+    .btn-primary{ padding:13px 22px; }
+  }
+</style>
+</head>
+<body>
+
+<div class="ambient-bg" id="ambientBg"></div>
+<canvas id="confettiCanvas"></canvas>
+
+<div class="app phase-focus" id="app">
+
+  <header>
+    <span class="eyebrow">Deep Focus</span>
+    <div class="header-controls">
+      <button class="icon-btn" id="muteBtn" aria-label="Mute sounds" title="Mute sounds">🔊</button>
+      <button class="icon-btn" id="settingsBtn" aria-label="Open settings" title="Settings">⚙</button>
+    </div>
+  </header>
+
+  <div class="timer-card">
+    <div class="ring-wrap">
+      <svg class="ring" viewBox="0 0 300 300">
+        <defs>
+          <linearGradient id="focusGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stop-color="var(--focus-1)"/>
+            <stop offset="100%" stop-color="var(--focus-2)"/>
+          </linearGradient>
+          <linearGradient id="breakGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stop-color="var(--break-1)"/>
+            <stop offset="100%" stop-color="var(--break-2)"/>
+          </linearGradient>
+          <linearGradient id="longGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stop-color="var(--long-1)"/>
+            <stop offset="100%" stop-color="var(--long-2)"/>
+          </linearGradient>
+        </defs>
+        <circle class="ring-track" cx="150" cy="150" r="130"/>
+        <circle class="ring-progress" id="ringProgress" cx="150" cy="150" r="130" stroke="url(#focusGradient)"/>
+      </svg>
+      <div class="ring-center">
+        <span class="phase-label" id="phaseLabel">Focus</span>
+        <span class="time-display" id="timeDisplay">25:00</span>
+        <span class="phase-sub" id="phaseSub">Session 1 of 4</span>
+      </div>
+    </div>
+
+    <div class="controls">
+      <button class="btn btn-ghost" id="resetBtn">Reset</button>
+      <button class="btn btn-primary" id="startBtn">Start</button>
+      <button class="btn btn-ghost" id="skipBtn">Skip →</button>
+    </div>
+
+    <div class="garden">
+      <span class="garden-label">Today's garden</span>
+      <div class="garden-row" id="gardenRow" aria-live="polite"></div>
+    </div>
+  </div>
+
+  <div class="week-card">
+    <div class="week-header">
+      <span class="week-title">This Week</span>
+      <span class="week-stat" id="weekTotal">Loading…</span>
+    </div>
+    <div class="chart" id="weekChart"></div>
+    <div class="streak" id="streakDisplay">🔥 —</div>
+  </div>
+
+</div>
+
+<div class="settings-overlay" id="settingsOverlay">
+  <div class="settings-panel">
+    <h2>Session lengths</h2>
+    <div class="field">
+      <label for="focusInput">Focus (min)</label>
+      <input type="number" id="focusInput" min="1" max="90" value="25">
+    </div>
+    <div class="field">
+      <label for="shortInput">Short break (min)</label>
+      <input type="number" id="shortInput" min="1" max="30" value="5">
+    </div>
+    <div class="field">
+      <label for="longInput">Long break (min)</label>
+      <input type="number" id="longInput" min="1" max="60" value="15">
+    </div>
+    <div class="field field-toggle">
+      <label for="soundToggle">Sound on phase change</label>
+      <input type="checkbox" id="soundToggle" checked>
+    </div>
+    <div class="settings-actions">
+      <button class="btn btn-ghost" id="settingsCloseBtn">Cancel</button>
+      <button class="btn btn-primary" id="settingsSaveBtn">Save</button>
+    </div>
+  </div>
+</div>
+
+<script>
+(function(){
+  "use strict";
+
+  // ---------------- Constants ----------------
+  const FLOWER_EMOJI = ['🌸','🌼','🌻','🌺'];
+  const DAY_LABELS = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+  const DEFAULT_SETTINGS = { focusMin:25, shortMin:5, longMin:15, sound:true };
+  const ORIGINAL_TITLE = document.title;
+
+  // ---------------- State ----------------
+  let settings = { ...DEFAULT_SETTINGS };
+  let phase = 'focus'; // 'focus' | 'short' | 'long'
+  let remainingSeconds = settings.focusMin * 60;
+  let totalSeconds = settings.focusMin * 60;
+  let isRunning = false;
+  let tickHandle = null;
+  let completedFocusToday = 0; // derived from today's stored stats
+  let audioCtx = null;
+
+  let currentWeekMonKey = null;
+  let prevWeekMonKey = null;
+  let currentWeekData = {};  // { 'YYYY-MM-DD': {sessions, minutes} }
+  let prevWeekData = {};
+
+  // ---------------- DOM refs ----------------
+  const el = {
+    app: document.getElementById('app'),
+    ambientBg: document.getElementById('ambientBg'),
+    ring: document.getElementById('ringProgress'),
+    phaseLabel: document.getElementById('phaseLabel'),
+    timeDisplay: document.getElementById('timeDisplay'),
+    phaseSub: document.getElementById('phaseSub'),
+    startBtn: document.getElementById('startBtn'),
+    resetBtn: document.getElementById('resetBtn'),
+    skipBtn: document.getElementById('skipBtn'),
+    muteBtn: document.getElementById('muteBtn'),
+    settingsBtn: document.getElementById('settingsBtn'),
+    settingsOverlay: document.getElementById('settingsOverlay'),
+    settingsCloseBtn: document.getElementById('settingsCloseBtn'),
+    settingsSaveBtn: document.getElementById('settingsSaveBtn'),
+    focusInput: document.getElementById('focusInput'),
+    shortInput: document.getElementById('shortInput'),
+    longInput: document.getElementById('longInput'),
+    soundToggle: document.getElementById('soundToggle'),
+    gardenRow: document.getElementById('gardenRow'),
+    weekTotal: document.getElementById('weekTotal'),
+    weekChart: document.getElementById('weekChart'),
+    streakDisplay: document.getElementById('streakDisplay'),
+    confettiCanvas: document.getElementById('confettiCanvas'),
+  };
+
+  const RING_R = 130;
+  const CIRCUMFERENCE = 2 * Math.PI * RING_R;
+  el.ring.setAttribute('stroke-dasharray', CIRCUMFERENCE.toFixed(2));
+
+  // ---------------- Date helpers ----------------
+  function pad(n){ return n < 10 ? '0'+n : ''+n; }
+  function formatDateKey(d){
+    return d.getFullYear() + '-' + pad(d.getMonth()+1) + '-' + pad(d.getDate());
+  }
+  function getMonday(d){
+    const copy = new Date(d);
+    const day = copy.getDay(); // 0 Sun .. 6 Sat
+    const diff = (day === 0 ? -6 : 1 - day);
+    copy.setDate(copy.getDate() + diff);
+    copy.setHours(0,0,0,0);
+    return copy;
+  }
+  function weekKeyFor(d){
+    return 'pomodoro-week:' + formatDateKey(getMonday(d));
+  }
+
+  // ---------------- Storage helpers ----------------
+  async function storageGet(key){
+    try{
+      const res = await window.storage.get(key, false);
+      return res ? JSON.parse(res.value) : null;
+    }catch(e){
+      return null;
+    }
+  }
+  async function storageSet(key, value){
+    try{
+      await window.storage.set(key, JSON.stringify(value), false);
+    }catch(e){
+      console.error('Storage save failed', e);
+    }
+  }
+
+  async function loadSettings(){
+    const saved = await storageGet('pomodoro-settings');
+    if(saved){ settings = { ...DEFAULT_SETTINGS, ...saved }; }
+    el.focusInput.value = settings.focusMin;
+    el.shortInput.value = settings.shortMin;
+    el.longInput.value = settings.longMin;
+    el.soundToggle.checked = settings.sound;
+    updateMuteIcon();
+  }
+
+  async function loadWeekData(){
+    const today = new Date();
+    currentWeekMonKey = weekKeyFor(today);
+    const prevWeekDate = new Date(today);
+    prevWeekDate.setDate(prevWeekDate.getDate() - 7);
+    prevWeekMonKey = weekKeyFor(prevWeekDate);
+
+    currentWeekData = (await storageGet(currentWeekMonKey)) || {};
+    prevWeekData = (await storageGet(prevWeekMonKey)) || {};
+
+    const todayKey = formatDateKey(today);
+    completedFocusToday = (currentWeekData[todayKey] && currentWeekData[todayKey].sessions) || 0;
+
+    renderGarden();
+    renderWeekChart();
+    renderStreak();
+  }
+
+  async function recordCompletedFocusSession(minutes){
+    const today = new Date();
+    const todayKey = formatDateKey(today);
+    const entry = currentWeekData[todayKey] || { sessions:0, minutes:0 };
+    entry.sessions += 1;
+    entry.minutes += minutes;
+    currentWeekData[todayKey] = entry;
+    completedFocusToday = entry.sessions;
+
+    await storageSet(currentWeekMonKey, currentWeekData);
+
+    renderGarden();
+    renderWeekChart();
+    renderStreak();
+  }
+
+  // ---------------- Rendering ----------------
+  function renderGarden(){
+    el.gardenRow.innerHTML = '';
+    const total = Math.max(completedFocusToday, 4);
+    for(let i=0;i<total;i++){
+      const span = document.createElement('span');
+      if(i < completedFocusToday){
+        span.className = 'bloom';
+        span.style.animationDelay = (i*0.05)+'s';
+        span.textContent = FLOWER_EMOJI[i % FLOWER_EMOJI.length];
+      } else {
+        span.className = 'bloom-slot';
+        span.textContent = '·';
+      }
+      el.gardenRow.appendChild(span);
+    }
+  }
+
+  function weekTotals(weekData){
+    let sessions = 0, minutes = 0;
+    Object.values(weekData).forEach(d => { sessions += d.sessions; minutes += d.minutes; });
+    return { sessions, minutes };
+  }
+
+  function renderWeekChart(){
+    const monday = getMonday(new Date());
+    const todayKey = formatDateKey(new Date());
+    el.weekChart.innerHTML = '';
+
+    let maxMinutes = 10;
+    const dayEntries = [];
+    for(let i=0;i<7;i++){
+      const d = new Date(monday);
+      d.setDate(d.getDate()+i);
+      const key = formatDateKey(d);
+      const data = currentWeekData[key] || { sessions:0, minutes:0 };
+      dayEntries.push({ key, label: DAY_LABELS[i], minutes: data.minutes, isToday: key === todayKey });
+      if(data.minutes > maxMinutes) maxMinutes = data.minutes;
+    }
+
+    dayEntries.forEach(entry => {
+      const col = document.createElement('div');
+      col.className = 'bar-col' + (entry.isToday ? ' today' : '');
+
+      const bar = document.createElement('div');
+      bar.className = 'bar';
+      const heightPct = Math.max(6, Math.round((entry.minutes / maxMinutes) * 100));
+      bar.style.height = heightPct + '%';
+      const hrs = Math.floor(entry.minutes/60);
+      const mins = entry.minutes % 60;
+      bar.title = entry.minutes > 0 ? (hrs > 0 ? hrs+'h '+mins+'m' : mins+'m') : 'No sessions';
+
+      const label = document.createElement('span');
+      label.className = 'bar-day';
+      label.textContent = entry.label[0];
+
+      col.appendChild(bar);
+      col.appendChild(label);
+      el.weekChart.appendChild(col);
+    });
+
+    const totals = weekTotals(currentWeekData);
+    const hrs = Math.floor(totals.minutes/60);
+    const mins = totals.minutes % 60;
+    el.weekTotal.textContent = totals.sessions + ' sessions · ' + hrs + 'h ' + mins + 'm';
+  }
+
+  function renderStreak(){
+    let streak = 0;
+    let d = new Date();
+    while(true){
+      const key = formatDateKey(d);
+      const mon = weekKeyFor(d);
+      let dayData = null;
+      if(mon === currentWeekMonKey) dayData = currentWeekData[key];
+      else if(mon === prevWeekMonKey) dayData = prevWeekData[key];
+      else break;
+      if(dayData && dayData.sessions > 0){
+        streak++;
+        d = new Date(d);
+        d.setDate(d.getDate()-1);
+      } else break;
+    }
+    el.streakDisplay.textContent = '🔥 ' + streak + (streak === 1 ? ' day streak' : ' day streak');
+  }
+
+  // ---------------- Timer core ----------------
+  function phaseDurationSeconds(p){
+    if(p === 'focus') return settings.focusMin * 60;
+    if(p === 'short') return settings.shortMin * 60;
+    return settings.longMin * 60;
+  }
+  function phaseLabelText(p){
+    if(p === 'focus') return 'Focus';
+    if(p === 'short') return 'Short Break';
+    return 'Long Break';
+  }
+  function phaseGradientId(p){
+    if(p === 'focus') return 'url(#focusGradient)';
+    if(p === 'short') return 'url(#breakGradient)';
+    return 'url(#longGradient)';
+  }
+
+  function setPhase(p, autoStart){
+    phase = p;
+    totalSeconds = phaseDurationSeconds(p);
+    remainingSeconds = totalSeconds;
+
+    el.app.classList.remove('phase-focus','phase-short','phase-long');
+    el.app.classList.add('phase-'+p);
+    el.ambientBg.classList.remove('phase-short','phase-long');
+    if(p !== 'focus') el.ambientBg.classList.add('phase-'+p);
+
+    el.phaseLabel.textContent = phaseLabelText(p);
+    el.ring.setAttribute('stroke', phaseGradientId(p));
+
+    const cyclePos = (completedFocusToday % 4) + 1;
+    el.phaseSub.textContent = (p === 'focus')
+      ? ('Session ' + cyclePos + ' of 4')
+      : (p === 'long' ? 'Take a longer breather' : 'Take a short breather');
+
+    updateDisplay();
+    if(autoStart){ start(); } else { pause(); }
+  }
+
+  function updateDisplay(){
+    const mm = Math.floor(remainingSeconds/60);
+    const ss = remainingSeconds % 60;
+    const text = pad(mm) + ':' + pad(ss);
+    el.timeDisplay.textContent = text;
+    if(isRunning){ document.title = text + ' · ' + phaseLabelText(phase); }
+    else { document.title = ORIGINAL_TITLE; }
+
+    const offset = CIRCUMFERENCE * (1 - remainingSeconds/totalSeconds);
+    el.ring.style.strokeDashoffset = offset.toFixed(2);
+  }
+
+  function tick(){
+    remainingSeconds -= 1;
+    if(remainingSeconds <= 0){
+      remainingSeconds = 0;
+      updateDisplay();
+      onPhaseComplete();
+      return;
+    }
+    updateDisplay();
+  }
+
+  function start(){
+    if(isRunning) return;
+    isRunning = true;
+    el.ring.classList.add('running');
+    el.startBtn.textContent = 'Pause';
+    ensureAudio();
+    tickHandle = setInterval(tick, 1000);
+    updateDisplay();
+  }
+  function pause(){
+    isRunning = false;
+    el.ring.classList.remove('running');
+    el.startBtn.textContent = 'Start';
+    if(tickHandle){ clearInterval(tickHandle); tickHandle = null; }
+    updateDisplay();
+  }
+  function toggleStart(){ isRunning ? pause() : start(); }
+
+  function reset(){
+    pause();
+    setPhase(phase, false);
+  }
+
+  async function onPhaseComplete(){
+    pause();
+    playChime(phase === 'focus' ? 'up' : 'down');
+
+    if(phase === 'focus'){
+      await recordCompletedFocusSession(settings.focusMin);
+      if(completedFocusToday % 4 === 0){
+        launchConfetti();
+        setPhase('long', false);
+      } else {
+        setPhase('short', false);
+      }
+    } else {
+      setPhase('focus', false);
+    }
+  }
+
+  function skip(){
+    if(phase === 'focus'){
+      onPhaseComplete();
+    } else {
+      pause();
+      setPhase('focus', false);
+    }
+  }
+
+  // ---------------- Audio ----------------
+  function ensureAudio(){
+    if(!audioCtx){
+      try{ audioCtx = new (window.AudioContext || window.webkitAudioContext)(); }
+      catch(e){ audioCtx = null; }
+    }
+  }
+  function playChime(direction){
+    if(!settings.sound || !audioCtx) return;
+    const now = audioCtx.currentTime;
+    const freqs = direction === 'up' ? [523.25, 659.25] : [659.25, 523.25];
+    freqs.forEach((f, i) => {
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.type = 'sine';
+      osc.frequency.value = f;
+      gain.gain.setValueAtTime(0.0001, now + i*0.18);
+      gain.gain.exponentialRampToValueAtTime(0.18, now + i*0.18 + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + i*0.18 + 0.32);
+      osc.connect(gain).connect(audioCtx.destination);
+      osc.start(now + i*0.18);
+      osc.stop(now + i*0.18 + 0.34);
+    });
+  }
+  function updateMuteIcon(){
+    el.muteBtn.textContent = settings.sound ? '🔊' : '🔇';
+  }
+
+  // ---------------- Confetti ----------------
+  function launchConfetti(){
+    const canvas = el.confettiCanvas;
+    const ctx = canvas.getContext('2d');
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+    const colors = ['#FF6B5B','#FFB84D','#2EC4B6','#4EA8DE','#8E7CC3'];
+    const particles = [];
+    for(let i=0;i<90;i++){
+      particles.push({
+        x: canvas.width/2 + (Math.random()-0.5)*120,
+        y: canvas.height*0.3,
+        vx: (Math.random()-0.5)*8,
+        vy: Math.random()*-6 - 2,
+        size: Math.random()*6+4,
+        color: colors[Math.floor(Math.random()*colors.length)],
+        rotation: Math.random()*360,
+        vr: (Math.random()-0.5)*12,
+        life: 1,
+      });
+    }
+    let frame = 0;
+    function step(){
+      frame++;
+      ctx.clearRect(0,0,canvas.width,canvas.height);
+      particles.forEach(p => {
+        p.vy += 0.18;
+        p.x += p.vx;
+        p.y += p.vy;
+        p.rotation += p.vr;
+        p.life -= 0.012;
+        ctx.save();
+        ctx.globalAlpha = Math.max(p.life,0);
+        ctx.translate(p.x, p.y);
+        ctx.rotate(p.rotation * Math.PI/180);
+        ctx.fillStyle = p.color;
+        ctx.fillRect(-p.size/2, -p.size/2, p.size, p.size*0.6);
+        ctx.restore();
+      });
+      if(frame < 140){
+        requestAnimationFrame(step);
+      } else {
+        ctx.clearRect(0,0,canvas.width,canvas.height);
+      }
+    }
+    requestAnimationFrame(step);
+  }
+  window.addEventListener('resize', () => {
+    el.confettiCanvas.width = window.innerWidth;
+    el.confettiCanvas.height = window.innerHeight;
+  });
+
+  // ---------------- Settings panel ----------------
+  function openSettings(){ el.settingsOverlay.classList.add('open'); }
+  function closeSettings(){ el.settingsOverlay.classList.remove('open'); }
+
+  async function saveSettings(){
+    const focusMin = Math.min(90, Math.max(1, parseInt(el.focusInput.value,10) || DEFAULT_SETTINGS.focusMin));
+    const shortMin = Math.min(30, Math.max(1, parseInt(el.shortInput.value,10) || DEFAULT_SETTINGS.shortMin));
+    const longMin = Math.min(60, Math.max(1, parseInt(el.longInput.value,10) || DEFAULT_SETTINGS.longMin));
+    settings = { focusMin, shortMin, longMin, sound: el.soundToggle.checked };
+    await storageSet('pomodoro-settings', settings);
+    updateMuteIcon();
+    closeSettings();
+    if(!isRunning){ setPhase(phase, false); }
+  }
+
+  function toggleMute(){
+    settings.sound = !settings.sound;
+    updateMuteIcon();
+    storageSet('pomodoro-settings', settings);
+  }
+
+  // ---------------- Wire up events ----------------
+  el.startBtn.addEventListener('click', toggleStart);
+  el.resetBtn.addEventListener('click', reset);
+  el.skipBtn.addEventListener('click', skip);
+  el.muteBtn.addEventListener('click', toggleMute);
+  el.settingsBtn.addEventListener('click', openSettings);
+  el.settingsCloseBtn.addEventListener('click', closeSettings);
+  el.settingsSaveBtn.addEventListener('click', saveSettings);
+  el.settingsOverlay.addEventListener('click', (e) => { if(e.target === el.settingsOverlay) closeSettings(); });
+
+  // ---------------- Init ----------------
+  (async function init(){
+    await loadSettings();
+    await loadWeekData();
+    setPhase('focus', false);
+  })();
+
+})();
+</script>
+
+</body>
+</html>
